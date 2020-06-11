@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.bernoulli import Bernoulli
 from torch.nn.functional import gumbel_softmax
+from sinkhorn_ops import gumbel_sinkhorn
 
 
 # ------------------------------------------------------------------------------
@@ -93,6 +94,48 @@ class Probabilistic_DAG_Generator_From_Roots(Probabilistic_DAG_Generator):
             sampled.add(i)
         return dag
 
+
+class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
+
+    def __init__(self, n_nodes, temp=1.0, noise_factor=1.0):
+        """
+        n_nodes: integer; number of nodes
+        """
+        
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.temp = temp
+        self.noise_factor = noise_factor
+        
+        #Random seed
+        torch.manual_seed(0)
+        np.random.seed(0)
+
+        #Mask for ordering
+        self.mask = torch.triu(torch.ones(self.n_nodes, self.n_nodes),1)
+
+        # define initial parameters
+        self.perm_weights = torch.rand(n_nodes, n_nodes, requires_grad = True)
+        self.edge_probs = torch.rand(n_nodes, n_nodes, requires_grad = True)
+    
+    def forward(self):
+        P, _  = gumbel_sinkhorn(self.perm_weights, hard=True)
+        P = P.squeeze()
+        P_inv = P.transpose(0,1)
+        probs = torch.matmul(P, self.edge_probs)                            # permute rows
+        probs = torch.matmul(P, probs.transpose(0,1)).transpose(0,1)        # permute cols
+        probs = probs * self.mask                                           # apply autoregressive masking
+        probs = torch.matmul(P_inv, probs)                                  # permute rows back to lexicographic ordering
+        probs = torch.matmul(P_inv, probs.transpose(0,1)).transpose(0,1)    # permute cols back to lexicographic ordering
+        dag = torch.zeros(self.n_nodes, self.n_nodes)
+        for i in range(self.n_nodes):
+            for j in range (self.n_nodes):
+                if probs[i,j] == 0:
+                    continue
+                p = torch.stack((probs[i,j], 1 - probs[i,j]))
+                p_log = torch.log(p)
+                dag[i,j] = gumbel_softmax(p_log, hard= True)[0]
+        return dag
 # ------------------------------------------------------------------------------
 if __name__ == '__main__':
     from torch.autograd import Variable
@@ -115,7 +158,7 @@ if __name__ == '__main__':
     for n_nodes in configs:
         
         print(f'checking with {n_nodes} nodes.')
-        model = Probabilistic_DAG_Generator_From_Roots(n_nodes)
+        model = Probabilistic_DAG_Generator_Sinkhorn(n_nodes)
         
         # compute and print dag
         dag = model()
@@ -127,6 +170,19 @@ if __name__ == '__main__':
         print(f'loss: {loss}')
         print(loss.grad_fn)
         loss.backward()
-        print(model.root_probs.grad)
-        print(model.edge_probs.grad)
+        try:
+            print('Gradient root probs')
+            print(model.root_probs.grad)
+        except:
+            print('Not available')
+        try:
+            print('Gradient edge probs')
+            print(model.edge_probs.grad)
+        except:
+            print('Not available')
+        try:
+            print('Gradient perm weights')
+            print(model.perm_weights.grad)
+        except:
+            print('Not available')
         plot_graph(graph=dag.detach().numpy().astype(int), out_path=f'test_{n_nodes}.pdf')
