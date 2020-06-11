@@ -58,7 +58,7 @@ class Probabilistic_DAG_Generator_From_Roots(Probabilistic_DAG_Generator):
     
     def forward(self):
         dag = torch.zeros(self.n_nodes, self.n_nodes)   # the final dag
-        sampled = set()                                 # set of nodes that children were sampled for
+        sampled = np.ones(self.n_nodes, dtype=bool)                                # set of nodes that children were sampled for
         to_sample = []                                    # list of nodes that will get children sampled
         # sample roots
         roots_one_hot = torch.zeros(self.n_nodes)
@@ -72,7 +72,7 @@ class Probabilistic_DAG_Generator_From_Roots(Probabilistic_DAG_Generator):
         count = 0
         while(len(to_sample) > 0):
             i = to_sample.pop(0)
-            if i in sampled:
+            if sampled[i]:
                 continue
             candidates = torch.ones(self.n_nodes)
             # don't sample ancestors as children
@@ -90,7 +90,7 @@ class Probabilistic_DAG_Generator_From_Roots(Probabilistic_DAG_Generator):
                     for anc in ancestors[i]:
                         ancestors[j].add(anc)
                     to_sample.append(j)
-            sampled.add(i)
+            sampled[i] = True
         return dag
 
 
