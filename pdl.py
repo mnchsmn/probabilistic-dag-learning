@@ -67,7 +67,6 @@ class Probabilistic_DAG_Generator_From_Roots(Probabilistic_DAG_Generator):
             roots_one_hot[i] = gumbel_softmax(p, hard=True)[0]
             if roots_one_hot[i] == 1:
                 to_sample.append(i)
-        print(f'roots: {to_sample}')
         # sample children
         ancestors = {k: set([k]) for k in range(self.n_nodes)}
         count = 0
