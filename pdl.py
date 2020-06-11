@@ -7,6 +7,8 @@ from torch.distributions.bernoulli import Bernoulli
 from torch.nn.functional import gumbel_softmax
 from sinkhorn_ops import gumbel_sinkhorn
 
+import random
+
 
 # ------------------------------------------------------------------------------
 
@@ -58,37 +60,34 @@ class Probabilistic_DAG_Generator_From_Roots(Probabilistic_DAG_Generator):
     
     def forward(self):
         dag = torch.zeros(self.n_nodes, self.n_nodes)   # the final dag
-        sampled = np.ones(self.n_nodes, dtype=bool)                                # set of nodes that children were sampled for
+        sampled = np.zeros(self.n_nodes, dtype=bool)     # set of nodes that children were sampled for
         to_sample = []                                    # list of nodes that will get children sampled
         # sample roots
-        roots_one_hot = torch.zeros(self.n_nodes)
+        roots_one_hot = torch.zeros(self.n_nodes, dtype=torch.uint8)
         for i in range(self.n_nodes):
             p = torch.stack((self.root_probs[i], 1-self.root_probs[i]))
             roots_one_hot[i] = gumbel_softmax(p, hard=True)[0]
             if roots_one_hot[i] == 1:
                 to_sample.append(i)
         # sample children
-        ancestors = {k: set([k]) for k in range(self.n_nodes)}
+        ancestors = torch.eye(self.n_nodes, dtype=torch.uint8)
         count = 0
         while(len(to_sample) > 0):
-            i = to_sample.pop(0)
+            # pick random element to sample nodes for
+            i= to_sample.pop(random.randrange(len(to_sample)))
             if sampled[i]:
                 continue
-            candidates = torch.ones(self.n_nodes)
-            # don't sample ancestors as children
-            for k in ancestors[i]:
-                candidates[k] = 0
-            # don't sample roots as children 
-            candidates = (1-roots_one_hot) * candidates
+            # don't sample ancestors and roots as children
+            candidates = (1-ancestors[i,:]) * (1-roots_one_hot)
             # sample children for node i
-            # TODO: The order here is a bias!
             for j in range(self.n_nodes):
                 p = torch.stack((self.edge_probs[i,j], 1 - self.edge_probs[i,j]))
                 dag[i,j] = gumbel_softmax(p, hard= True)[0] * candidates[j]
                 if dag[i,j] == 1:
-                    ancestors[j].add(i)
-                    for anc in ancestors[i]:
-                        ancestors[j].add(anc)
+                    # add i to ancestors of j
+                    ancestors[j,i] = 1
+                    # add all ancestors of i to j
+                    ancestors[j,:][ancestors[i,:]] = 1
                     to_sample.append(j)
             sampled[i] = True
         return dag
@@ -157,7 +156,7 @@ if __name__ == '__main__':
     for n_nodes in configs:
         
         print(f'checking with {n_nodes} nodes.')
-        model = Probabilistic_DAG_Generator_Sinkhorn(n_nodes)
+        model = Probabilistic_DAG_Generator_From_Roots(n_nodes)
         
         # compute and print dag
         dag = model()
