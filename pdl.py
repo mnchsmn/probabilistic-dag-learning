@@ -34,6 +34,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         self.root_probs = torch.nn.Parameter(r)
         e = torch.zeros(n_nodes, n_nodes, requires_grad=True)
         torch.nn.init.normal_(e)
+        e.fill_diagonal_(0)
         self.edge_probs = torch.nn.Parameter(e)
     
     def forward(self):
@@ -97,6 +98,7 @@ class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
         self.perm_weights = torch.nn.Parameter(p)
         e = torch.zeros(n_nodes, n_nodes, requires_grad=True)
         torch.nn.init.normal_(e)
+        e.fill_diagonal_(0)
         self.edge_probs = torch.nn.Parameter(e)
     
     def forward(self):
