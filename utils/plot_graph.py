@@ -16,7 +16,7 @@ def plot_graph(graph, out_path):
     fig.savefig(out_path)
     plt.close(fig)
 
-def plot_gt_vs_pred(gt_graph, pred_graph, out_path):
+def plot_gt_vs_pred(gt_graph, pred_graph, out_path=None):
     G_gt = nx.from_numpy_matrix(gt_graph, create_using=nx.DiGraph())
     Skeleton_gt = nx.from_numpy_matrix(gt_graph).to_directed()
     G_pred = nx.from_numpy_matrix(pred_graph, create_using=nx.DiGraph())
@@ -59,8 +59,12 @@ def plot_gt_vs_pred(gt_graph, pred_graph, out_path):
     for ax in axs:
         ax.set_axis_off()
     plt.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
+    if out_path is not None:
+        fig.savefig(out_path)
+        plt.close(fig)
+    else:
+        plt.show()
+    
 
 def plot_gt_vs_pred_from_files(gt_path, pred_path, out_path):
     gt = np.load(gt_path)
