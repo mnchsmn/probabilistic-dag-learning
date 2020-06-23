@@ -14,13 +14,14 @@ import random
 
 class Probabilistic_DAG_Generator_From_Roots(nn.Module):
 
-    def __init__(self, n_nodes):
+    def __init__(self, n_nodes, verbose=False):
         """
         n_nodes: integer; number of nodes
         """
         
         super().__init__()
         self.n_nodes = n_nodes
+        self.verbose = verbose
         
         #Random seed
         torch.manual_seed(0)
@@ -37,6 +38,13 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         torch.diagonal(e).fill_(0)
         self.edge_probs = torch.nn.Parameter(e)
     
+    def set_verbosity(self, verbose):
+        self.verbose = verbose
+
+    def log(self, message):
+        if self.verbose:
+            print(message)
+
     def forward(self):
         dag = torch.zeros(self.n_nodes, self.n_nodes)   # the final dag
         sampled = np.zeros(self.n_nodes, dtype=bool)     # set of nodes that children were sampled for
@@ -45,6 +53,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         p = torch.stack((p_roots, 1 - p_roots))
         p_log = torch.log(p)
         roots = gumbel_softmax(p_log, hard=True, dim=0)[0].type(torch.uint8)
+        self.log(f'sampled roots {roots}')
         to_sample = roots.nonzero().view(-1).tolist()  # list of nodes that will get children sampled
         # sample children
         p_edges = torch.sigmoid(self.edge_probs)
@@ -55,6 +64,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
             i= to_sample.pop(random.randrange(len(to_sample)))
             if sampled[i]:
                 continue
+            self.log(f'sampling children for {i}')
             # don't sample ancestors and roots as children
             candidates = (1-ancestors[i,:]) * (1-roots)
             # sample children for node i
@@ -62,6 +72,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
             p_log = torch.log(p)
             dag[i,:] = gumbel_softmax(p_log, hard= True, dim=0)[0] * candidates.float()
             for j in dag[i,:].nonzero().view(-1).tolist():
+                self.log(f'sampled {j}')
                 # add i to ancestors of j
                 ancestors[j,i] = 1
                 # add all ancestors of i to j
@@ -134,7 +145,7 @@ if __name__ == '__main__':
 
     configs = [
         (5),                 # test various graph sizes
-        (10)
+        #(10)
     ]
     
     for n_nodes in configs:
