@@ -8,6 +8,9 @@ from torch.nn.functional import gumbel_softmax
 from sinkhorn_ops import gumbel_sinkhorn
 
 import random
+from itertools import chain, combinations
+from tqdm.auto import tqdm
+import math
 
 
 # ------------------------------------------------------------------------------
@@ -61,7 +64,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         count = 0
         while(len(to_sample) > 0):
             # pick random element to sample nodes for
-            i= to_sample.pop(random.randrange(len(to_sample)))
+            i= to_sample.pop(0)
             if sampled[i]:
                 continue
             self.log(f'sampling children for {i}')
@@ -81,7 +84,77 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
             sampled[i] = True
         return dag
 
+    def _compute_likelihood_vector(self, probs, outcome):
+        return torch.prod(torch.abs((1-outcome) - probs))
 
+    def _compute_edge_likelihood(self, dag, roots):
+        computed = np.zeros(self.n_nodes, dtype=bool)
+        p_edges = torch.sigmoid(self.edge_probs)
+        ancestors = torch.eye(self.n_nodes, dtype=torch.uint8)
+
+        parents = roots.nonzero().view(-1).tolist()
+
+        ll_edges = 1
+        while(len(parents) > 0):
+            # pick random element to sample nodes for
+            i= parents.pop(0)
+            if computed[i]:
+                continue
+            self.log(f'calculating likelihood of children for {i}')
+            # don't sample ancestors and roots as children
+            candidates = (1-ancestors[i,:].float()) * (1-roots)
+            # sample children for node i
+            ll = self._compute_likelihood_vector(p_edges[i,:] * candidates, dag[i,:])
+            ll_edges = ll_edges * ll
+            for j in dag[i,:].nonzero().view(-1).tolist():
+                # add i to ancestors of j
+                ancestors[j,i] = 1
+                # add all ancestors of i to j
+                ancestors[j,:][ancestors[i,:]] = 1
+                parents.append(j)
+            computed[i] = True
+        return ll_edges
+
+    def _get_parentless_nodes(self, dag):
+        parentless = []
+        for i in range(self.n_nodes):
+            if torch.all(dag[:,i].squeeze() == 0):
+                parentless.append(i)
+        return parentless
+
+    def _compute_likelihood_from_roots(self, dag, roots):
+        # likelihood roots
+        ll_roots = self._compute_likelihood_vector(torch.sigmoid(self.root_probs), roots)
+        # likelihood rest
+        ll_edges = self._compute_edge_likelihood(dag, roots)
+        
+        return ll_roots * ll_edges
+
+    def likelihood(self, dag):
+        parentless = self._get_parentless_nodes(dag)
+
+        # approximation: rootset = roots, for exact calculation use likelihood_exact
+        roots = torch.zeros(self.n_nodes)
+        for i in parentless:
+            roots[i] = 1
+        return self._compute_likelihood_from_roots(dag, roots)
+
+        
+
+    def likelihood_exact(self, dag):
+        parentless = self._get_parentless_nodes(dag)
+        # compute all possible rootsets as powerset of parentless
+        rootsets = chain.from_iterable(combinations(parentless, r) for r in range(len(parentless)+1))
+        # for each possible rootset compute likelihood and sum up
+        ll = 0
+        for rootset in tqdm(rootsets, total=math.pow(2,len(parentless))):
+            roots = torch.zeros(self.n_nodes)
+            for i in rootset:
+                roots[i] = 1
+            ll += self._compute_likelihood_from_roots(dag, roots)
+        return ll
+
+        
 class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
 
     def __init__(self, n_nodes, temp=1.0, noise_factor=1.0):
