@@ -52,7 +52,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         p_roots = torch.sigmoid(self.root_probs)
         p = torch.stack((p_roots, 1 - p_roots))
         p_log = torch.log(p)
-        roots = gumbel_softmax(p_log, hard=True, dim=0)[0].type(torch.uint8)
+        roots = gumbel_softmax(p_log, hard=True, dim=0)[0]
         self.log(f'sampled roots {roots}')
         to_sample = roots.nonzero().view(-1).tolist()  # list of nodes that will get children sampled
         # sample children
@@ -66,7 +66,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
                 continue
             self.log(f'sampling children for {i}')
             # don't sample ancestors and roots as children
-            candidates = (1-ancestors[i,:]) * (1-roots)
+            candidates = (1-ancestors[i,:].float()) * (1-roots)
             # sample children for node i
             p = torch.stack((p_edges[i,:], 1 - p_edges[i,:]))
             p_log = torch.log(p)
