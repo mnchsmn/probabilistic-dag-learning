@@ -11,7 +11,7 @@ import random
 from itertools import chain, combinations
 from tqdm.auto import tqdm
 import math
-
+from joblib import Parallel, delayed
 
 # ------------------------------------------------------------------------------
 
@@ -113,6 +113,10 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
                 ancestors[j,:][ancestors[i,:]] = 1
                 parents.append(j)
             computed[i] = True
+
+        ##make sure all nodes with children were visited, otherwise set likelihood to zero
+        nodes_w_children = (torch.sum(dag,dim=1) > 0).float().view(-1,1)
+        ll_edges = ll_edges * torch.prod(1-((nodes_w_children - torch.tensor(computed, dtype=torch.float)) > 0).float())
         return ll_edges
 
     def _get_parentless_nodes(self, dag):
@@ -122,7 +126,11 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
                 parentless.append(i)
         return parentless
 
-    def _compute_likelihood_from_roots(self, dag, roots):
+    def _compute_likelihood_from_roots(self, dag, rootset):
+        # fill roots tensor
+        roots = torch.zeros(self.n_nodes)
+        for i in rootset:
+            roots[i] = 1
         # likelihood roots
         ll_roots = self._compute_likelihood_vector(torch.sigmoid(self.root_probs), roots)
         # likelihood rest
@@ -133,25 +141,34 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
     def likelihood(self, dag):
         parentless = self._get_parentless_nodes(dag)
 
-        # approximation: rootset = roots, for exact calculation use likelihood_exact
+        # approximation: rootset = parentless nodes, for exact calculation use likelihood_exact
+        return self._compute_likelihood_from_roots(dag, parentless)
+
+    def root_likelihood(self, dag):
+        parentless = self._get_parentless_nodes(dag)
         roots = torch.zeros(self.n_nodes)
         for i in parentless:
             roots[i] = 1
-        return self._compute_likelihood_from_roots(dag, roots)
-
+        # likelihood roots
+        return self._compute_likelihood_vector(torch.sigmoid(self.root_probs), roots)
         
 
     def likelihood_exact(self, dag):
         parentless = self._get_parentless_nodes(dag)
-        # compute all possible rootsets as powerset of parentless
-        rootsets = chain.from_iterable(combinations(parentless, r) for r in range(len(parentless)+1))
+        # find disconnected nodes
+        disconnected = []
+        always_roots = []
+        for i in parentless:
+            if torch.sum(dag[i,:]) == 0:
+                disconnected.append(i)
+            else:
+                always_roots.append(i)
+        # compute all possible rootsets as powerset of disconnected
+        disc_roots_sets = chain.from_iterable(combinations(disconnected, r) for r in range(len(disconnected)+1))
         # for each possible rootset compute likelihood and sum up
         ll = 0
-        for rootset in tqdm(rootsets, total=math.pow(2,len(parentless))):
-            roots = torch.zeros(self.n_nodes)
-            for i in rootset:
-                roots[i] = 1
-            ll += self._compute_likelihood_from_roots(dag, roots)
+        for i, disc_roots in enumerate(disc_roots_sets):
+            ll += self._compute_likelihood_from_roots(dag, sorted(list(disc_roots) + always_roots))
         return ll
 
         
