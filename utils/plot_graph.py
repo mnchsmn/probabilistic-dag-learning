@@ -4,7 +4,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-def plot_graph(graph, out_path):
+def plot_graph(graph, out_path=None):
     G = nx.from_numpy_matrix(graph, create_using=nx.DiGraph())
 
     fig = plt.figure(figsize=(15, 6))
@@ -13,8 +13,11 @@ def plot_graph(graph, out_path):
     nx.draw_networkx(G, with_labels=True, width=2, pos=positions)
     plt.axis('off')
     plt.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
+    if out_path is not None:
+        fig.savefig(out_path)
+        plt.close(fig)
+    else:
+        plt.show()
 
 def plot_gt_vs_pred(gt_graph, pred_graph, out_path=None):
     G_gt = nx.from_numpy_matrix(gt_graph, create_using=nx.DiGraph())
