@@ -54,14 +54,13 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         dag = torch.zeros(self.n_nodes, self.n_nodes)   # the final dag
         sampled = np.zeros(self.n_nodes, dtype=bool)     # set of nodes that children were sampled for
         # sample roots
-        p_roots = torch.sigmoid(self.root_probs)
-        p = torch.stack((p_roots, 1 - p_roots))
-        p_log = torch.log(p)
+        log_p_roots = F.logsigmoid(self.root_probs)     # numerically stable
+        p_log = orch.stack((p_roots, torch.log(1 - torch.exp(log_p_roots))))
         roots = gumbel_softmax(p_log, hard=True, dim=0)[0]
         self.log(f'sampled roots {roots}')
         to_sample = roots.nonzero().view(-1).tolist()  # list of nodes that will get children sampled
         # sample children
-        p_edges = torch.sigmoid(self.edge_probs)
+        log_p_edges = F.logsigmoid(self.edge_probs)
         ancestors = torch.eye(self.n_nodes, dtype=torch.uint8)
         count = 0
         while(len(to_sample) > 0):
@@ -73,8 +72,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
             # don't sample ancestors and roots as children
             candidates = (1-ancestors[i,:].float()) * (1-roots)
             # sample children for node i
-            p = torch.stack((p_edges[i,:], 1 - p_edges[i,:]))
-            p_log = torch.log(p)
+            p_log = torch.stack((log_p_edges[i,:], torch.log(1 - torch.exp(log_p_edges[i,:]))))
             dag[i,:] = gumbel_softmax(p_log, hard= True, dim=0)[0] * candidates.float()
             for j in dag[i,:].nonzero().view(-1).tolist():
                 self.log(f'sampled {j}')
@@ -205,13 +203,12 @@ class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
         self.edge_probs = torch.nn.Parameter(e)
     
     def forward(self):
-        log_alpha = torch.log(torch.sigmoid(self.perm_weights))
+        log_alpha = F.logsigmoid(self.perm_weights)
         P, _  = gumbel_sinkhorn(log_alpha, temp=self.temp, hard=True)
         P = P.squeeze()
         P_inv = P.transpose(0,1)
-        p_edge = torch.sigmoid(self.edge_probs)
-        p = torch.stack((p_edge, 1 - p_edge))
-        p_log = torch.log(p)
+        log_p_edge = F.logsigmoid(self.edge_probs)                      # numerical stability
+        p_log = torch.stack((log_p_edge, torch.log(1 - torch.exp(log_p_edge))))
         dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
 
         dag = torch.matmul(torch.matmul(P, dag), P_inv)                 # permute rows & cols
@@ -261,15 +258,14 @@ class Probabilistic_DAG_Generator_TopK_SoftSort(nn.Module):
         self.edge_probs = torch.nn.Parameter(e)
     
     def forward(self):
-        logits = torch.log(torch.softmax(self.perm_weights, dim=0)).view(1,-1)
+        logits = F.log_softmax(self.perm_weights, dim=0).view(1,-1)
         gumbels = -torch.empty_like(logits).exponential_().log()
         gumbels = (logits + gumbels) / self.temp
         P = self.sort(gumbels)
         P = P.squeeze()
         P_inv = P.transpose(0,1)
-        p_edge = torch.sigmoid(self.edge_probs)
-        p = torch.stack((p_edge, 1 - p_edge))
-        p_log = torch.log(p)
+        log_p_edge = F.logsigmoid(self.edge_probs)
+        p_log = torch.stack((log_p_edge, torch.log(1 - torch.exp(log_p_edge))))
         dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
         
         dag = torch.matmul(torch.matmul(P, dag), P_inv)                 # permute rows & cols
@@ -313,7 +309,7 @@ if __name__ == '__main__':
     for n_nodes in configs:
         
         print(f'checking with {n_nodes} nodes.')
-        model = Probabilistic_DAG_Generator_Gumbel_Sinkhorn(n_nodes)
+        model = Probabilistic_DAG_Generator_TopK_SoftSort(n_nodes)
         
         # compute and print dag
         dag = model()
