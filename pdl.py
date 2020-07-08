@@ -206,7 +206,7 @@ class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
     
     def forward(self):
         log_alpha = torch.log(torch.sigmoid(self.perm_weights))
-        P, _  = gumbel_sinkhorn(log_alpha, temp=0.1, hard=True)
+        P, _  = gumbel_sinkhorn(log_alpha, temp=self.temp, hard=True)
         P = P.squeeze()
         P_inv = P.transpose(0,1)
         p_edge = torch.sigmoid(self.edge_probs)
@@ -214,17 +214,27 @@ class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
         p_log = torch.log(p)
         dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
 
-        dag = torch.matmul(P, dag)                                      # permute rows
-        dag = torch.matmul(P, dag.transpose(0,1)).transpose(0,1)        # permute cols
+        dag = torch.matmul(torch.matmul(P, dag), P_inv)                 # permute rows & cols
         dag = dag * self.mask                                           # apply autoregressive masking
-        dag = torch.matmul(P_inv, dag)                                  # permute rows back to lexicographic ordering
-        dag = torch.matmul(P_inv, dag.transpose(0,1)).transpose(0,1)    # permute cols back to lexicographic ordering
-        
+        dag = torch.matmul(torch.matmul(P_inv, dag), P)                 # permute rows & cols back to lexicographic ordering
+        return dag
+    
+    def extract_deterministic(self, threshold):
+        log_alpha = torch.log(torch.abs(self.perm_weights.detach()))
+        P, _  = gumbel_sinkhorn(log_alpha, temp=1, hard=True, noise_factor=0)
+        P = P.squeeze()
+        P_inv = P.transpose(0,1)
+        dag = (self.edge_probs.detach() > threshold).float()
+
+        dag = torch.matmul(torch.matmul(P, dag), P_inv)                 # permute rows & cols
+        dag = dag * self.mask                                           # apply autoregressive masking given by sampled order
+        dag = torch.matmul(torch.matmul(P_inv, dag), P)                 # permute rows & cols back to lexicographic ordering
+
         return dag
 
 class Probabilistic_DAG_Generator_TopK_SoftSort(nn.Module):
 
-    def __init__(self, n_nodes, temp=1.0, noise_factor=1.0):
+    def __init__(self, n_nodes, temp=1.0):
         """
         n_nodes: integer; number of nodes
         """
@@ -232,8 +242,7 @@ class Probabilistic_DAG_Generator_TopK_SoftSort(nn.Module):
         super().__init__()
         self.n_nodes = n_nodes
         self.temp = temp
-        self.noise_factor = noise_factor
-        self.sort = SoftSort_p1(hard=True, tau=self.temp, )
+        self.sort = SoftSort_p1(hard=True, tau=self.temp)
         
         #Random seed
         torch.manual_seed(0)
@@ -252,11 +261,9 @@ class Probabilistic_DAG_Generator_TopK_SoftSort(nn.Module):
         self.edge_probs = torch.nn.Parameter(e)
     
     def forward(self):
-        logits = torch.log(torch.sigmoid(self.perm_weights)).view(1,-1)
+        logits = torch.log(torch.softmax(self.perm_weights, dim=0)).view(1,-1)
         gumbels = -torch.empty_like(logits).exponential_().log()
         gumbels = (logits + gumbels) / self.temp
-        print(gumbels.shape)
-        print(gumbels)
         P = self.sort(gumbels)
         P = P.squeeze()
         P_inv = P.transpose(0,1)
@@ -264,13 +271,25 @@ class Probabilistic_DAG_Generator_TopK_SoftSort(nn.Module):
         p = torch.stack((p_edge, 1 - p_edge))
         p_log = torch.log(p)
         dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
-
-        dag = torch.matmul(P, dag)                                      # permute rows
-        dag = torch.matmul(P, dag.transpose(0,1)).transpose(0,1)        # permute cols
-        dag = dag * self.mask                                           # apply autoregressive masking
-        dag = torch.matmul(P_inv, dag)                                  # permute rows back to lexicographic ordering
-        dag = torch.matmul(P_inv, dag.transpose(0,1)).transpose(0,1)    # permute cols back to lexicographic ordering
         
+        dag = torch.matmul(torch.matmul(P, dag), P_inv)                 # permute rows & cols
+        dag = dag * self.mask                                           # apply autoregressive masking given by sampled order
+        dag = torch.matmul(torch.matmul(P_inv, dag), P)                 # permute rows & cols back to lexicographic ordering
+        
+        return dag
+
+    def extract_deterministic(self, threshold):
+        P = self.sort(self.perm_weights.detach().view(1,-1))
+        P = P.squeeze()
+        P_inv = P.transpose(0,1)
+        dag = (self.edge_probs.detach() > threshold).float()
+        print(dag.shape)
+        print(P.shape)
+
+        dag = torch.matmul(torch.matmul(P, dag), P_inv)                 # permute rows & cols
+        dag = dag * self.mask                                           # apply autoregressive masking given by sampled order
+        dag = torch.matmul(torch.matmul(P_inv, dag), P)                 # permute rows & cols back to lexicographic ordering
+
         return dag
 # ------------------------------------------------------------------------------
 if __name__ == '__main__':
@@ -294,7 +313,7 @@ if __name__ == '__main__':
     for n_nodes in configs:
         
         print(f'checking with {n_nodes} nodes.')
-        model = Probabilistic_DAG_Generator_TopK_SoftSort(n_nodes)
+        model = Probabilistic_DAG_Generator_Gumbel_Sinkhorn(n_nodes)
         
         # compute and print dag
         dag = model()
