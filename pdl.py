@@ -55,7 +55,7 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         sampled = np.zeros(self.n_nodes, dtype=bool)     # set of nodes that children were sampled for
         # sample roots
         log_p_roots = F.logsigmoid(self.root_probs)     # numerically stable
-        p_log = orch.stack((p_roots, torch.log(1 - torch.exp(log_p_roots))))
+        p_log = torch.stack((log_p_roots, torch.log(1 - torch.exp(log_p_roots))))
         roots = gumbel_softmax(p_log, hard=True, dim=0)[0]
         self.log(f'sampled roots {roots}')
         to_sample = roots.nonzero().view(-1).tolist()  # list of nodes that will get children sampled
