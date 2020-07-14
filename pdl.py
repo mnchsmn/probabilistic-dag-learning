@@ -42,6 +42,10 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
         torch.nn.init.normal_(e)
         torch.diagonal(e).fill_(0)
         self.edge_probs = torch.nn.Parameter(e)
+
+    def seed(self, seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
     
     def set_verbosity(self, verbose):
         self.verbose = verbose
@@ -227,6 +231,10 @@ class Probabilistic_DAG_Generator_Topological(nn.Module):
         torch.nn.init.normal_(e)
         torch.diagonal(e).fill_(-300)
         self.edge_probs = torch.nn.Parameter(e)
+
+    def seed(self, seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
 
     def sample_edges(self):
         # p_edge_stacked = torch.stack((self.edge_probs, -self.edge_probs))
