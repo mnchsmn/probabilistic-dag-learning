@@ -201,114 +201,111 @@ class Probabilistic_DAG_Generator_From_Roots(nn.Module):
             sampled[i] = True
         return dag
 
+class Probabilistic_DAG_Generator_Topological(nn.Module):
+
+    def __init__(self, n_nodes, temp=1.0, seed=0):
+        """
+        n_nodes: integer; number of nodes
+        """
         
-class Probabilistic_DAG_Generator_Sinkhorn(nn.Module):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.temp = temp
+        
+        #Random seed
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+        #Mask for ordering
+        self.mask = torch.triu(torch.ones(self.n_nodes, self.n_nodes),1)
+
+        # define initial parameters
+        p = torch.zeros(n_nodes, n_nodes, requires_grad=True)
+        torch.nn.init.normal_(p)
+        self.perm_weights = torch.nn.Parameter(p)
+        e = torch.zeros(n_nodes, n_nodes, requires_grad=True)
+        torch.nn.init.normal_(e)
+        torch.diagonal(e).fill_(-300)
+        self.edge_probs = torch.nn.Parameter(e)
+
+    def sample_edges(self):
+        # p_edge_stacked = torch.stack((self.edge_probs, -self.edge_probs))
+        # log_p_edge = F.logsigmoid(self.edge_probs)
+        # dag = gumbel_softmax(log_p_edge, hard=True, dim=0)[0]
+        log_p_edge = F.logsigmoid(self.edge_probs)                      # numerical stability
+        p_log = torch.stack((log_p_edge, torch.log(1 - torch.exp(log_p_edge))))
+        dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
+        return dag
+
+    def sample_permutation(self):
+        return torch.eye(self.n_nodes)
+
+    def deterministic_permutation(self):
+        return torch.eye(self.n_nodes)
+
+    def forward(self):
+        P = self.sample_permutation()
+        P_inv = P.transpose(0,1)
+        dag = self.sample_edges()
+        dag = dag * torch.matmul(torch.matmul(P_inv, self.mask), P)     # apply autoregressive masking
+        return dag
+
+    def extract_deterministic(self, threshold):
+        P = self.deterministic_permutation()
+        P_inv = P.transpose(0,1)
+        dag = (self.edge_probs.detach() > threshold).float()
+        dag = dag * torch.matmul(torch.matmul(P_inv, self.mask), P)      # apply autoregressive masking
+        return dag
+
+class Probabilistic_DAG_Generator_Sinkhorn(Probabilistic_DAG_Generator_Topological):
 
     def __init__(self, n_nodes, temp=1.0, noise_factor=1.0):
         """
         n_nodes: integer; number of nodes
         """
         
-        super().__init__()
-        self.n_nodes = n_nodes
-        self.temp = temp
+        super().__init__(n_nodes=n_nodes, temp=temp)
         self.noise_factor = noise_factor
-        
-        #Random seed
-        torch.manual_seed(0)
-        np.random.seed(0)
-
-        #Mask for ordering
-        self.mask = torch.triu(torch.ones(self.n_nodes, self.n_nodes),1)
-
-        # define initial parameters
-        #self.perm_weights = torch.nn.Parameter(torch.rand(n_nodes, n_nodes, requires_grad = True))
-        #self.edge_probs = torch.nn.Parameter(torch.rand(n_nodes, n_nodes, requires_grad = True))
-        p = torch.zeros(n_nodes, n_nodes, requires_grad=True)
-        torch.nn.init.normal_(p)
-        self.perm_weights = torch.nn.Parameter(p)
-        e = torch.zeros(n_nodes, n_nodes, requires_grad=True)
-        torch.nn.init.normal_(e)
-        torch.diagonal(e).fill_(0)
-        self.edge_probs = torch.nn.Parameter(e)
     
-    def forward(self):
+    def sample_permutation(self):
         log_alpha = F.logsigmoid(self.perm_weights)
         P, _  = gumbel_sinkhorn(log_alpha, temp=self.temp, hard=True)
         P = P.squeeze()
-        P_inv = P.transpose(0,1)
-        log_p_edge = F.logsigmoid(self.edge_probs)                      # numerical stability
-        p_log = torch.stack((log_p_edge, torch.log(1 - torch.exp(log_p_edge))))
-        dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
-
-        dag = dag * torch.matmul(torch.matmul(P_inv, self.mask), P)      # apply autoregressive masking
-        return dag
+        return P
     
-    def extract_deterministic(self, threshold):
+    def deterministic_permutation(self):
         log_alpha = F.logsigmoid(self.perm_weights)
         P, _  = gumbel_sinkhorn(log_alpha, temp=self.temp, hard=True, noise_factor=0)
         P = P.squeeze()
-        P_inv = P.transpose(0,1)
-        dag = (self.edge_probs.detach() > threshold).float()
+        return P
 
-        dag = dag * torch.matmul(torch.matmul(P_inv, self.mask), P)      # apply autoregressive masking
-
-        return dag
-
-class Probabilistic_DAG_Generator_TopK_SoftSort(nn.Module):
+class Probabilistic_DAG_Generator_TopK_SoftSort(Probabilistic_DAG_Generator_Topological):
 
     def __init__(self, n_nodes, temp=1.0):
         """
         n_nodes: integer; number of nodes
         """
         
-        super().__init__()
-        self.n_nodes = n_nodes
-        self.temp = temp
-        self.sort = SoftSort_p1(hard=True, tau=self.temp)
-        
-        #Random seed
-        torch.manual_seed(0)
-        np.random.seed(0)
-
-        #Mask for ordering
-        self.mask = torch.triu(torch.ones(self.n_nodes, self.n_nodes),1)
-
-        # define initial parameters
+        super().__init__(n_nodes=n_nodes, temp=temp)
+        # Permutation weights
         p = torch.zeros(n_nodes, requires_grad=True)
         torch.nn.init.normal_(p)
         self.perm_weights = torch.nn.Parameter(p)
-        e = torch.zeros(n_nodes, n_nodes, requires_grad=True)
-        torch.nn.init.normal_(e)
-        torch.diagonal(e).fill_(0)
-        self.edge_probs = torch.nn.Parameter(e)
-    
-    def forward(self):
+
+        self.sort = SoftSort_p1(hard=True, tau=self.temp)
+
+    def sample_permutation(self):
         logits = F.log_softmax(self.perm_weights, dim=0).view(1,-1)
         gumbels = -torch.empty_like(logits).exponential_().log()
         gumbels = (logits + gumbels) / self.temp
         P = self.sort(gumbels)
         P = P.squeeze()
-        P_inv = P.transpose(0,1)
-        log_p_edge = F.logsigmoid(self.edge_probs)
-        p_log = torch.stack((log_p_edge, torch.log(1 - torch.exp(log_p_edge))))
-        dag = gumbel_softmax(p_log, hard=True, dim=0)[0]
-        
-        dag = dag * torch.matmul(torch.matmul(P_inv, self.mask), P)      # apply autoregressive masking
-        
-        return dag
-
-    def extract_deterministic(self, threshold):
+        return P
+    
+    def deterministic_permutation(self):
         P = self.sort(self.perm_weights.detach().view(1,-1))
         P = P.squeeze()
-        P_inv = P.transpose(0,1)
-        dag = (self.edge_probs.detach() > threshold).float()
-        print(dag.shape)
-        print(P.shape)
-
-        dag = dag * torch.matmul(torch.matmul(P_inv, self.mask), P)      # apply autoregressive masking
-
-        return dag
+        return P
 # ------------------------------------------------------------------------------
 if __name__ == '__main__':
     from torch.autograd import Variable
